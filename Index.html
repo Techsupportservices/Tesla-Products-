@@ -1803,32 +1803,6 @@
             // In a real app, this would open a form
         }
 
-        // Checkout Functions
-        function checkoutWhatsApp() {
-            if (cart.length === 0) {
-                showToast('Your cart is empty!', 'error');
-                return;
-            }
-            
-            const subtotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-            const tax = subtotal * 0.08;
-            const total = subtotal + tax;
-            
-            let message = '🚗 *NEW TESLA ORDER*%0A%0A';
-            message += '*Order Details:*%0A';
-            cart.forEach(item => {
-                message += `• ${item.name} x${item.quantity} = $${(item.price * item.quantity).toLocaleString()}%0A`;
-            });
-            message += `%0A*Subtotal:* $${subtotal.toLocaleString()}%0A`;
-            message += `*Tax (8%):* $${Math.round(tax).toLocaleString()}%0A`;
-            message += `*TOTAL:* $${Math.round(total).toLocaleString()}%0A%0A`;
-            message += `I'm ready to place this order. Please confirm availability and next steps.`;
-            
-            const whatsappNumber = '+12055688513';
-            window.open(`https://wa.me/${encodeURIComponent(whatsappNumber)}?text=${message}`, '_blank');
-            showToast('Opening WhatsApp...', 'success');
-        }
-
         function checkoutEmail() {
             if (cart.length === 0) {
                 showToast('Your cart is empty!', 'error');
