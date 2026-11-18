@@ -1,7 +1,3 @@
-<#
-    Tactical RMM Installer v2.12.0
-    Author: Updated for Zero Popups
-#>
 [CmdletBinding()]
 param()
 
@@ -19,117 +15,95 @@ $innosetup = "tacticalagent-v2.12.0-windows-amd64.exe"
 $downloadlink = "https://github.com/amidaware/rmmagent/releases/download/v2.12.0/tacticalagent-v2.12.0-windows-amd64.exe"
 $OutPath = $env:TMP
 $outputFile = Join-Path $OutPath $innosetup
-$serviceName = 'tacticalrmm'
 
-# --- 1. NETWORK CHECK ---
-Write-Host "Checking Network..." -ForegroundColor Cyan
+# ==========================================
+# 1. NETWORK CHECK
+# ==========================================
 $serverHost = ([System.Uri]$api).Host
 $connectResult = $null
 $tries = 0
-do {
-    $connectResult = Test-NetConnection -ComputerName $serverHost -Port 443 -ErrorAction SilentlyContinue
-    if (-not $connectResult) { Start-Sleep -Seconds 5; $tries++ }
+do { 
+    $connectResult = Test-NetConnection -ComputerName $serverHost -Port 443 -ErrorAction SilentlyContinue 
+    if (-not $connectResult) { Start-Sleep -Seconds 5; $tries++ } 
 } until ($connectResult.TcpTestSucceeded -or $tries -eq 3)
 if (-not $connectResult.TcpTestSucceeded) { Exit 1 }
 
-# --- 2. DOWNLOAD ---
-Write-Host "Downloading..." -ForegroundColor Cyan
-Try {
-    Invoke-WebRequest -Uri $downloadlink -OutFile $outputFile -UseBasicParsing -TimeoutSec 60
-    Unblock-File -Path $outputFile
-} Catch {
-    Write-Host "Download Failed"
-    Exit 1
+# ==========================================
+# 2. DOWNLOAD
+# ==========================================
+Invoke-WebRequest -Uri $downloadlink -OutFile $outputFile -UseBasicParsing
+Unblock-File -Path $outputFile
+
+# ==========================================
+# 3. DEFINITIONS (API Helpers)
+# ==========================================
+# Load Windows API to find and click buttons
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class WinAPI {
+    [DllImport("user32.dll", SetLastError=true, CharSet=CharSet.Auto)]
+    public static extern IntPtr FindWindow(string lpClassName, string lpWindowTitle);
+    
+    [DllImport("user32.dll")]
+    public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+    
+    [DllImport("user32.dll")]
+    public static extern bool SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+    
+    [DllImport("user32.dll")]
+    public static extern int GetWindowTextLength(IntPtr hWnd);
+    
+    [DllImport("user32.dll")]
+    public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
 }
-
-# --- 3. DEFENDER EXCLUSIONS ---
-Add-MpPreference -ExclusionPath 'C:\Program Files\TacticalAgent\*'
-Add-MpPreference -ExclusionPath 'C:\ProgramData\TacticalRMM\*'
-
-# --- 4. AGGRESSIVE WINDOW HIDER (WATCHER) ---
-# This background script actively hides any window that pops up during install
-$watcherRunspace = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace()
-$watcherRunspace.Open()
-$watcherPS = [System.Management.Automation.PowerShell]::Create()
-$watcherPS.Runspace = $watcherRunspace
-
-[void]$watcherPS.AddScript({
-    Add-Type @"
-    using System; using System.Runtime.InteropServices;
-    public class WinApi {
-        [DllImport("user32.dll", SetLastError=true, CharSet=CharSet.Auto)] 
-        public static extern IntPtr FindWindow(string className, string windowText);
-        [DllImport("user32.dll", SetLastError=true)] 
-        public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-        [DllImport("user32.dll", SetLastError=true)] 
-        public static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
-        [DllImport("user32.dll", SetLastError=true)] 
-        public static extern int GetWindowLong(IntPtr hWnd, int nIndex);
-    }
 "@
-    $timeout = (Get-Date).AddMinutes(2)
-    while ((Get-Date) -lt $timeout) {
-        # Hide "Setup of ..." or "Tactical" windows
-        Get-Process | Where-Object {$_.MainWindowHandle -ne [IntPtr]::Zero} | ForEach-Object {
-            $h = $_.MainWindowHandle
-            # Find Window by text is hard, so we check common titles
-            # If we can't check title, we just hide it based on process name if needed.
-            # Here we try to find "Tactical" or "Setup"
-            # Simplest way: Hide Window by Handle if it has visible styles
-            try {
-                $style = [WinApi]::GetWindowLong($h, -16) # GWL_STYLE
-                # If WS_VISIBLE (0x10000000) is set, hide it
-                if (($style -band 0x10000000) -ne 0) {
-                     [WinApi]::ShowWindow($h, 0)
-                }
-            } catch {}
-        }
-        Start-Sleep -Milliseconds 100
+$WM_CLOSE = 0x0010
+
+# ==========================================
+# 4. RUN INSTALLER
+# ==========================================
+# /SP- hides the splash screen. /SUPPRESSMSGBOXES tries to hide message boxes.
+Start-Process -FilePath $outputFile -ArgumentList "/VERYSILENT /SP- /SUPPRESSMSGBOXES /NORESTART" -Wait
+Start-Sleep -Seconds 3
+
+# ==========================================
+# 5. POPUP KILLER
+# ==========================================
+Write-Host "Scanning for success popups..."
+$windowFound = $false
+$scanCount = 10 # Run check 10 times (20 seconds total)
+
+while ($scanCount -gt 0 -and -not $windowFound) {
+    # Use generic FindWindow on Title. The title is "Tactical RMM"
+    $tacticalWindow = [WinAPI]::FindWindow($null, "Tactical RMM")
+    
+    if ($tacticalWindow -ne [IntPtr]::Zero) {
+        # Window found! Send WM_CLOSE to close the popup automatically
+        [WinAPI]::PostMessage($tacticalWindow, $WM_CLOSE, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+        Write-Host "Found popup and sent Close signal."
+        $windowFound = $true
     }
-})
-$watcherPS.BeginInvoke() | Out-Null
-
-# --- 5. RUN INSTALLER (Silent) ---
-Write-Host "Installing..." -ForegroundColor Cyan
-Start-Process -FilePath $outputFile -ArgumentList '/VERYSILENT /NORESTART /SUPPRESSMSGBOXES /SP-' -WindowStyle Hidden -Wait
-
-Write-Host "Waiting for extraction..." -ForegroundColor Gray
-Start-Sleep -Seconds 10
-
-# --- 6. LOCATE & REGISTER ---
-$agentPaths = @(
-    "C:\Program Files\TacticalAgent\tacticalrmm.exe",
-    "C:\Program Files (x86)\TacticalAgent\tacticalrmm.exe"
-)
-$agentExePath = $null
-
-foreach ($p in $agentPaths) {
-    if (Test-Path $p) {
-        $agentExePath = $p
-        break
-    }
+    
+    Start-Sleep -Milliseconds 200
+    $scanCount--
 }
 
-if (-not $agentExePath) {
-    # Fallback: Search the folder for any .exe if standard path failed
-    $found = Get-ChildItem "C:\Program Files\TacticalAgent\" -Filter "*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($found) { $agentExePath = $found.FullName }
+# ==========================================
+# 6. REGISTER AGENT
+# ==========================================
+$agentExePath = "C:\Program Files\TacticalAgent\tacticalrmm.exe"
+if (!(Test-Path $agentExePath)) {
+    $agentExePath = "C:\Program Files (x86)\TacticalAgent\tacticalrmm.exe"
 }
 
-Write-Host "Registering Agent..." -ForegroundColor Cyan
-$installArgs = @('-m', 'install', '--api', $api, '--client-id', $clientid, '--site-id', $siteid, '--agent-type', $agenttype, '--auth', $auth)
-
-Try {
-    if ($agentExePath) {
-        Start-Process -FilePath $agentExePath -ArgumentList ($installArgs -join " ") -WindowStyle Hidden -Wait
-    }
-} Catch {
-    Write-Host "Registration error: $_"
+if (Test-Path $agentExePath) {
+    $installArgs = @('-m', 'install', '--api', $api, '--client-id', $clientid, '--site-id', $siteid, '--agent-type', $agenttype, '--auth', $auth)
+    Start-Sleep -Seconds 1
+    Start-Process -FilePath $agentExePath -ArgumentList ($installArgs -join " ") -WindowStyle Hidden -Wait
 }
 
 # Cleanup
-$watcherPS.Stop() | Out-Null
-$watcherRunspace.Close() | Out-Null
 Remove-Item -Path $outputFile -Force -ErrorAction SilentlyContinue
 
 Write-Host "Done."
